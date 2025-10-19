@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # -----------------------------------------
 
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import UnstructuredFileLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.retrievers import ParentDocumentRetriever
 from langchain.storage import InMemoryStore
@@ -17,12 +17,13 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferWindowMemory
+from langchain_community.vectorstores.utils import filter_complex_metadata # Import the filter function
 
-# Load environment variables
+# Load environment variables for local development
 load_dotenv()
 
 # --- Constants ---
-PERSIST_DIRECTORY = "chroma_db_persistent"
+PERSIST_DIRECTORY = "chroma_db_persistent_v3"
 
 # --- Core Application Logic ---
 
@@ -40,16 +41,20 @@ def get_vectorstore():
     return vectorstore
 
 def process_and_store_documents(uploaded_files, vectorstore):
-    """Loads, splits, and stores documents in the persistent vector store."""
+    """Loads, splits, and stores documents in the persistent vector store using Unstructured."""
     processed_files = []
-    with st.spinner("Processing and embedding documents... This may take a while."):
+    with st.spinner("Processing with advanced parsing... This may take a while."):
         for uploaded_file in uploaded_files:
             # Create a temporary file to load the document
             with open(uploaded_file.name, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
-            loader = PyPDFLoader(uploaded_file.name)
+            # Use UnstructuredFileLoader for intelligent parsing
+            loader = UnstructuredFileLoader(uploaded_file.name, mode="elements")
             docs = loader.load()
+
+            # **FIX:** Filter out complex metadata before storing in ChromaDB
+            docs = filter_complex_metadata(docs)
 
             # Add source metadata to each document for later filtering
             for doc in docs:
@@ -111,8 +116,8 @@ def get_conversational_chain(vectorstore, selected_document, google_api_key):
 
 # --- Streamlit UI ---
 
-st.set_page_config(page_title="Financial Analyzer V2 🧠", layout="wide")
-st.title("Financial Document Analyzer V2: Conversational & Persistent")
+st.set_page_config(page_title="Financial Analyzer V3 📄", layout="wide")
+st.title("Financial Document Analyzer V3: Advanced Parsing")
 
 # Initialize vector store and session state
 vectorstore = get_vectorstore()
@@ -122,12 +127,18 @@ if "messages" not in st.session_state:
 if "conversation_chain" not in st.session_state:
     st.session_state.conversation_chain = None
 
+# --- Securely Get API Key ---
+# When deployed, Streamlit reads from secrets.toml.
+# Locally, it reads from the .env file.
+google_api_key = st.secrets.get("GOOGLE_API_KEY", os.getenv("GOOGLE_API_KEY"))
+
 # Sidebar for configuration and document management
 with st.sidebar:
     st.header("Configuration")
-    google_api_key = st.text_input(
-        "Google API Key:", type="password", value=os.getenv("GOOGLE_API_KEY", "")
-    )
+    if not google_api_key:
+        st.warning("Please add your Google API Key to your Streamlit secrets.")
+    else:
+        st.success("Google API Key is configured.")
     
     st.markdown("---")
     st.header("Document Library")
@@ -177,7 +188,7 @@ for message in st.session_state.messages:
 # Main chat input
 if prompt := st.chat_input(f"Ask a question about '{selected_document}'..."):
     if not google_api_key:
-        st.warning("Please enter your Google API Key in the sidebar to start.")
+        st.warning("Please configure your Google API Key in the Streamlit secrets to start.")
     elif not sources and not uploaded_files:
         st.warning("Please upload and process at least one document to begin.")
     else:
@@ -190,15 +201,19 @@ if prompt := st.chat_input(f"Ask a question about '{selected_document}'..."):
                 result = st.session_state.conversation_chain({"question": prompt})
                 response = result['answer']
                 
-                # Format the response with source documents
-                response_with_sources = f"{response}\n\n---"
-                if result.get("source_documents"):
-                    response_with_sources += "\n\n**Sources:**\n"
-                    for doc in result["source_documents"]:
-                        source = doc.metadata.get('source', 'Unknown')
-                        page = doc.metadata.get('page', 'N/A')
-                        response_with_sources += f"- *{source}, page {page}*\n"
+                st.markdown(response)
                 
-                st.markdown(response_with_sources)
-                
-        st.session_state.messages.append({"role": "assistant", "content": response_with_sources})
+                # Display source documents in an expander
+                with st.expander("Show Sources"):
+                    if result.get("source_documents"):
+                        for doc in result["source_documents"]:
+                            source = doc.metadata.get('source', 'Unknown')
+                            page = doc.metadata.get('page_number', 'N/A')
+                            st.markdown(f"**Source:** *{source}, page {page}*")
+                            # Unstructured provides clean text, including markdown for tables
+                            st.markdown(doc.page_content, unsafe_allow_html=True)
+                            st.markdown("---")
+                    else:
+                        st.info("No sources found for this response.")
+
+        st.session_state.messages.append({"role": "assistant", "content": response})
