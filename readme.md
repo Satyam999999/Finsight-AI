@@ -48,17 +48,7 @@ This gives a **hallucination-free**, **context-aware**, **compliance-ready** cus
 
 ## 🏗 System Architecture
 
-```mermaid
-graph TD
-    A[User Input] -->|'Call me at 555-0199'| B(🛡️ Privacy Layer)
-    B -->|NLP Redaction (Presidio)| C{Safe Query}
-    C -->|Vector Search| D[🧠 ChromaDB Brain]
-    D -->|Retrieve Context| E[Real-World Store Data]
-    B -->|Simulated Signal| F[📡 IoT Sensor Layer]
-    E & F --> G[🤖 Hybrid Agent Logic]
-    G -->|Response Generation| H[Streamlit UI]
-    H -->|Render| I[Interactive Map & Logs]
-```
+
 
 1. **Ingestion:** Loads 25,600 Starbucks global locations.  
 2. **Privacy Firewall:** MS Presidio redacts PII (Name, Phone, Email, Location).  
